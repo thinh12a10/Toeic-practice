@@ -1,0 +1,361 @@
+# Ollama Setup Guide - Local LLM for TOEIC Agent
+
+## 🎯 Overview
+
+**Ollama** allows you to run large language models locally on your machine **completely free and without internet** (after initial setup). This is perfect for the TOEIC speaking agent because:
+
+- ✅ **100% Free** - No API costs
+- ✅ **Instant** - Direct local inference
+- ✅ **Private** - Questions stay on your device
+- ✅ **Unlimited** - Generate as many questions as you want
+
+---
+
+## 📦 Installation
+
+### Windows
+
+1. **Download Ollama** from https://ollama.ai
+2. Run the installer and follow the prompts
+3. Ollama will be installed to `C:\Users\{username}\AppData\Local\Programs\Ollama`
+
+### Mac
+
+```bash
+# Download from https://ollama.ai or use Homebrew:
+brew install ollama
+```
+
+### Linux
+
+```bash
+# Run the installation script:
+curl -fsSL https://ollama.ai/install.sh | sh
+```
+
+---
+
+## 🚀 Quick Start
+
+### Step 1: Start Ollama Server
+
+Open a terminal and run:
+
+```bash
+ollama serve
+```
+
+You should see output like:
+```
+2024/04/11 10:30:45 Listening on 127.0.0.1:11434
+```
+
+Keep this terminal open - it runs the LLM server in the background.
+
+### Step 2: Download a Model (First Time Only)
+
+Open **another terminal** and run:
+
+```bash
+ollama run mistral
+```
+
+This downloads and runs the Mistral model (~3.8 GB). First download takes 5-15 minutes depending on internet speed.
+
+After download completes, you'll see a prompt - just type `exit` to return to terminal.
+
+### Step 3: Verify Setup
+
+Test the connection:
+
+```bash
+curl http://localhost:11434/api/tags
+```
+
+You should see JSON output listing available models.
+
+### Step 4: Update TOEIC Agent Config
+
+Copy the `.env.example` to `.env`:
+
+```bash
+cp .env.example .env
+```
+
+The default settings work as-is:
+```env
+OLLAMA_HOST=http://localhost:11434
+OLLAMA_MODEL=mistral
+```
+
+### Step 5: Test Generation
+
+Run the test script:
+
+```bash
+python test_dynamic_questions.py
+```
+
+You should see:
+```
+✓ Initialized Ollama (mistral) for dynamic question generation
+```
+
+---
+
+## 🧠 Available Models
+
+Download whichever fits your needs:
+
+| Model | Size | Speed | Quality | Command |
+|-------|------|-------|---------|---------|
+| **mistral** | 3.8 GB | Fast ⚡ | Good | `ollama run mistral` |
+| llama2 | 3.8 GB | Medium | Excellent | `ollama run llama2` |
+| neural-chat | 3.8 GB | Medium | Good | `ollama run neural-chat` |
+| orca-mini | 1.3 GB | Very Fast | Fair | `ollama run orca-mini` |
+| dolphin-mixtral | 26 GB | Slow | Excellent | `ollama run dolphin-mixtral` |
+
+**Recommended**: Start with **mistral** (fast, good quality, reasonable size)
+
+### Change Model
+
+To switch models, update `.env`:
+
+```env
+OLLAMA_MODEL=llama2
+```
+
+Then restart your application. Ollama caches downloaded models, so switching is instant.
+
+---
+
+## 💻 System Requirements
+
+### Minimum
+- **CPU**: Dual-core processor
+- **RAM**: 8 GB
+- **Disk**: 10 GB free (varies by model)
+
+### Recommended
+- **CPU**: Quad-core or better
+- **RAM**: 16 GB+
+- **Disk**: 30 GB free SSD
+- **GPU**: NVIDIA/AMD GPU (optional but faster)
+
+### GPU Support
+
+**NVIDIA GPUs**: Ollama automatically uses CUDA if available (much faster!)
+
+**AMD GPUs**: Supported on some cards
+
+**Mac Silicon (M1/M2/M3)**: Fully supported and optimized
+
+---
+
+## 🔧 Troubleshooting
+
+### Error: "Connection refused" / "localhost:11434"
+
+**Problem**: Ollama server is not running
+
+**Solution**:
+```bash
+# Terminal 1 - Start the server
+ollama serve
+
+# Terminal 2 - Check status
+curl http://localhost:11434/api/tags
+```
+
+Keep Terminal 1 running while using the agent.
+
+### Error: "Model not found"
+
+**Problem**: Model hasn't been downloaded yet
+
+**Solution**:
+```bash
+# Download the model
+ollama run mistral
+# (Wait for download to complete)
+
+# Then restart the agent
+python test_dynamic_questions.py
+```
+
+### Slow Generation (10+ seconds per question)
+
+**Causes**:
+- Using CPU only (no GPU support)
+- Model too large for your system
+- Low available RAM
+
+**Solutions**:
+1. Install GPU support (if available)
+2. Use smaller model: `ollama run orca-mini`
+3. Increase available RAM by closing other programs
+4. Reduce batch size
+
+### "Out of memory" error
+
+**Solution**: Use a smaller model or increase system RAM
+```bash
+ollama run orca-mini  # Smallest model
+```
+
+---
+
+## 📊 Performance Comparison
+
+### Generation Speed (Per Question)
+
+| Setup | Speed | Cost |
+|-------|-------|------|
+| Ollama (CPU) | 5-15 sec | Free |
+| Ollama (GPU) | 1-3 sec | Free |
+| OpenAI | 2-3 sec | $0.002 |
+| Anthropic | 2-4 sec | $0.001 |
+| Hardcoded | <0.1 sec | Free |
+
+*Note: Ollama CPU speed depends on hardware. First run slower due to model loading.*
+
+---
+
+## 🎓 Usage Examples
+
+### Example 1: Basic Generation
+
+```python
+from part1_questions import Part1QuestionEngine
+
+# Ollama will be auto-detected
+engine = Part1QuestionEngine(level="intermediate")
+question = engine.generate_question()
+
+print(f"Generated by: {question['generated_by']}")  # "ollama"
+print(f"Topic: {question['topic']}")
+print(f"Text: {question['text']}")
+```
+
+### Example 2: Full Session
+
+```python
+engine = Part1QuestionEngine(level="intermediate")
+
+# Generate 6 questions for a practice session
+questions = engine.get_part1_sequence(num_questions=6)
+
+for i, q in enumerate(questions, 1):
+    print(f"\nQuestion {i}:")
+    print(f"  {q['text']}")
+    print(f"  (Topic: {q['topic']}, Difficulty: {q['difficulty']})")
+
+print(f"\nGeneration source: {engine.get_generation_source()}")
+```
+
+### Example 3: Switch to Different Model
+
+```bash
+# Stop current model (Ctrl+C in ollama serve terminal)
+# Download new model
+ollama run llama2
+
+# Update .env
+# OLLAMA_MODEL=llama2
+
+# Restart agent
+python test_dynamic_questions.py
+```
+
+---
+
+## 🌐 Network Setup (Advanced)
+
+### Run Ollama on Different Machine
+
+If you want Ollama running on a server and connect from another computer:
+
+**Server (Ollama Machine)**:
+```bash
+# Listen on all interfaces
+OLLAMA_HOST=0.0.0.0:11434 ollama serve
+```
+
+**Client (TOEIC Agent)**:
+```env
+# .env
+OLLAMA_HOST=http://192.168.1.100:11434
+OLLAMA_MODEL=mistral
+```
+
+---
+
+## 📈 Optimization Tips
+
+### For Faster Generation
+
+1. **Use GPU** if available (automatic on NVIDIA/Mac Silicon)
+2. **Use smaller model**: `orca-mini` > `neural-chat` > `mistral` > `llama2`
+3. **Increase context window** (edit model parameters)
+4. **Batch requests** instead of serial
+
+### For Better Quality
+
+1. **Use larger model**: `llama2` > `mistral` > `neural-chat` > `orca-mini`
+2. **Adjust temperature** (0.5 for consistent, 0.9 for creative)
+3. **Fine-tune prompts** for specific domains
+
+### For Lower RAM Usage
+
+1. **Use smaller model**: `orca-mini` (1.3 GB)
+2. **Reduce batch size**
+3. **Use quantized versions** (lower precision = faster + smaller)
+
+---
+
+## 🔄 Fallback Behavior
+
+The TOEIC agent uses intelligent fallback:
+
+```
+1. Try Ollama (if running)
+2. Try OpenAI API (if OPENAI_API_KEY set)
+3. Try Anthropic API (if ANTHROPIC_API_KEY set)
+4. Use Hardcoded Questions (always available)
+```
+
+So even if Ollama crashes, the agent continues working!
+
+---
+
+## 📚 Learn More
+
+- **Ollama Docs**: https://github.com/ollama/ollama
+- **Model Library**: https://ollama.ai/library
+- **Community**: https://github.com/ollama/ollama/discussions
+
+---
+
+## ✅ Checklist - Verify Everything Works
+
+- [ ] Ollama installed from https://ollama.ai
+- [ ] `ollama serve` running in terminal
+- [ ] Model downloaded: `ollama run mistral`
+- [ ] `.env` file created with Ollama settings
+- [ ] `curl http://localhost:11434/api/tags` returns JSON (verify server running)
+- [ ] `python test_dynamic_questions.py` shows "Initialized Ollama"
+- [ ] Questions are generated successfully
+
+---
+
+## 🎉 You're Done!
+
+Your TOEIC agent now uses free, local LLM generation via Ollama.
+
+**Key Benefits**:
+- 🎯 No API costs
+- 🚀 Instant generation
+- 🔒 Private (no data sent to cloud)
+- ♾️ Unlimited questions
+
+Enjoy unlimited TOEIC practice questions! 📚
