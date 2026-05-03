@@ -27,7 +27,7 @@ class Part1QuestionEngine:
     - Focus on pronunciation, fluency, and intonation
     """
     
-    def __init__(self, level: str = "beginner", use_llm: bool = True):
+    def __init__(self, level: str = "intermediate", use_llm: bool = True):
         """
         Initialize Part 1 Question Engine
         
@@ -48,7 +48,7 @@ class Part1QuestionEngine:
     def _initialize_llm(self) -> None:
         """Initialize LLM client (Gemini > Ollama)"""
         try:
-            # Try Gemini API first (Google's LLM, free tier available with Google account)
+            # Setup Gemini API if key is available (Google's LLM)
             gemini_api_key = os.getenv("GEMINI_API_KEY")
             if gemini_api_key:
                 self.llm_provider = "gemini"
@@ -57,63 +57,8 @@ class Part1QuestionEngine:
                 return
         except Exception as e:
             print(f"⚠ Gemini API initialization failed: {e}")
-
-        try:
-            # Try Ollama first (local, free)
-            ollama_host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-            ollama_model = os.getenv("OLLAMA_MODEL", "mistral")
-            
-            # Test connection to Ollama
-            response = requests.get(urljoin(ollama_host, "/api/tags"), timeout=2)
-            if response.status_code == 200:
-                self.llm_provider = "ollama"
-                self.llm_client = {
-                    "host": ollama_host,
-                    "model": ollama_model
-                }
-                print(f"✓ Initialized Ollama ({ollama_model}) for dynamic question generation")
-                return
-        except Exception as e:
-            print(f"⚠ Ollama connection failed: {e}")
-            print(f"  (Make sure Ollama is running: ollama serve)")
         
-        print("⚠ No LLM available (Ollama not running, no API keys found).")
-        raise RuntimeError("No LLM provider available. Please ensure Ollama is running or API keys are configured.")
-    
-    def _generate_with_ollama(self) -> Optional[str]:
-        """Generate a question using Ollama (local inference)"""
-        try:
-            prompt = self._build_generation_prompt()
-            host = self.llm_client["host"]
-            model = self.llm_client["model"]
-            
-            response = requests.post(
-                urljoin(host, "/api/generate"),
-                json={
-                    "model": model,
-                    "prompt": prompt,
-                    "stream": False,
-                    "temperature": 0.7,
-                    "top_p": 0.9,
-                    "top_k": 40,
-                    "num_predict": 256,  # Limit output tokens for faster generation
-                },
-                timeout=120  # Longer timeout for local inference
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                return result.get("response", "").strip()
-            else:
-                print(f"⚠ Ollama error: {response.status_code}")
-                return None
-                
-        except requests.exceptions.ConnectionError:
-            print("⚠ Ollama connection failed. Make sure Ollama is running with: ollama serve")
-            return None
-        except Exception as e:
-            print(f"⚠ Ollama generation failed: {e}")
-            return None
+        print("⚠ no API keys found), please recheck your API keys")
     
     def _generate_with_gemini(self) -> Optional[str]:
         """Generate a question using Gemini API (Google's LLM)"""
@@ -196,12 +141,7 @@ Format your response EXACTLY like this (no markdown, just plain text):
         
         try:
             # Try to generate based on provider priority
-            raw_response = None
-            
-            if self.llm_provider == "ollama":
-                raw_response = self._generate_with_ollama()
-            elif self.llm_provider == "gemini":
-                raw_response = self._generate_with_gemini()
+            raw_response = self._generate_with_gemini()
             
             if not raw_response:
                 return None
@@ -253,39 +193,9 @@ Format your response EXACTLY like this (no markdown, just plain text):
         
         raise RuntimeError("LLM not available for question generation")
     
-    def get_part1_sequence(self, num_questions: int = 6) -> list:
-        """
-        Generate a sequence of Part 1 questions (typically 6)
-        
-        Args:
-            num_questions: Number of questions to generate (default 6)
-        
-        Returns:
-            List of question dictionaries
-        """
-        questions = []
-        for _ in range(num_questions):
-            questions.append(self.generate_question())
-        return questions
-    
-    def get_questions_used_count(self) -> int:
-        """Get number of questions used in current session"""
-        return len(self.questions_used)
-    
     def reset_session(self) -> None:
         """Reset question tracking for new session"""
         self.questions_used.clear()
-    
-    def get_generation_source(self) -> str:
-        """
-        Get the current question generation source
-        
-        Returns:
-            LLM provider name (ollama, openai, or anthropic)
-        """
-        if self.use_llm and self.llm_provider:
-            return self.llm_provider
-        return "unknown"
     
     def enable_llm(self, enabled: bool = True) -> None:
         """

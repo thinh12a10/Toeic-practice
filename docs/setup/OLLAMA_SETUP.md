@@ -249,8 +249,6 @@ for i, q in enumerate(questions, 1):
     print(f"\nQuestion {i}:")
     print(f"  {q['text']}")
     print(f"  (Topic: {q['topic']}, Difficulty: {q['difficulty']})")
-
-print(f"\nGeneration source: {engine.get_generation_source()}")
 ```
 
 ### Example 3: Switch to Different Model

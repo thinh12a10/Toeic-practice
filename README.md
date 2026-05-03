@@ -468,8 +468,6 @@ Question generation for Part 1 (Read Aloud) with dynamic LLM support.
 class Part1QuestionEngine:
     def __init__(self, level: str = "beginner", use_llm: bool = True)
     def generate_question() -> Dict[str, Any]  # Auto-selects LLM or fallback
-    def get_part1_sequence(num_questions: int = 6) -> List[Dict]
-    def get_generation_source() -> str  # Returns "ollama", "openai", "anthropic", or "hardcoded"
     def enable_llm(enabled: bool = True) -> None  # Toggle LLM at runtime
 ```
 
