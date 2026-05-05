@@ -35,7 +35,17 @@ class TOEICGUIApp:
         """
         self.root = root
         self.root.title("TOEIC Speaking Test - Part 1: Read Aloud")
-        self.root.geometry("1200x850")
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+
+        # Leave margin for taskbar + padding
+        width = int(screen_width * 0.9)
+        height = int(screen_height * 0.85)
+
+        # Center the window
+        x = (screen_width - width) // 2
+        y = (screen_height - height) // 2
+        self.root.geometry(f"{width}x{height}+{x}+{y}")
         self.root.configure(bg="#f0f0f0")
         
         # Initialize components
@@ -399,31 +409,22 @@ class TOEICGUIApp:
             self.root.after(0, self._stop_recording)
     
     def _process_recorded_audio(self) -> None:
-        """Convert recorded audio frames to text"""
         try:
             self.update_status("🔄 Processing speech...", "blue")
-            
-            # Audio parameters (must match recording)
-            CHANNELS = 1
-            RATE = 16000
-            
-            # Convert audio frames to bytes
-            audio_bytes = b''.join(self.audio_frames)
-            
-            # Create AudioData object for speech recognition
-            audio = sr.AudioData(audio_bytes, RATE, 2)  # 2 bytes per sample (16-bit)
-            
-            # Use Google Speech Recognition API
-            text = self.recognizer.recognize_google(audio)
-            self.user_response_text = text
-            
-            # Evaluate the response
-            self.root.after(0, self._evaluate_response)
-        
-        except sr.UnknownValueError:
-            self.update_status("❌ Could not understand audio. Please speak more clearly.", "red")
-        except sr.RequestError as e:
-            self.update_status(f"❌ Service error: {str(e)}", "red")
+
+            # ✅ Convert to WAV bytes for Gemini
+            audio_bytes = self._frames_to_wav_bytes(self.audio_frames)
+
+            # ✅ Optional: keep STT for display only
+            try:
+                audio = sr.AudioData(b''.join(self.audio_frames), 16000, 2)
+                self.user_response_text = self.recognizer.recognize_google(audio)
+            except:
+                self.user_response_text = "(Could not transcribe)"
+
+            # ✅ Evaluate with audio
+            self.root.after(0, lambda: self._evaluate_response(audio_bytes))
+
         except Exception as e:
             self.update_status(f"❌ Error: {str(e)}", "red")
     
@@ -434,24 +435,21 @@ class TOEICGUIApp:
         self.mic_button.pack(side=tk.LEFT, padx=5)
         self.update_status("⏸️ Recording stopped. Processing your speech...", "blue")
     
-    def _evaluate_response(self) -> None:
-        """Evaluate the recorded and transcribed response"""
+    def _evaluate_response(self, audio_bytes: bytes) -> None:
         try:
-            # Score the response
             score = self.evaluator.evaluate(
-                self.user_response_text,
-                self.current_question,
-                self.user_profile.level
+                audio_bytes=audio_bytes,
+                user_response=self.user_response_text,
+                question=self.current_question,
+                user_level=self.user_profile.level
             )
-            
-            # Generate feedback
+
             feedback = self.feedback_generator.generate_feedback(
                 self.user_response_text,
                 self.current_question,
                 score
             )
-            
-            # Store response in session
+
             response = Response(
                 question_id=self.current_question.get("id", "unknown"),
                 user_text=self.user_response_text,
@@ -459,10 +457,9 @@ class TOEICGUIApp:
                 feedback=feedback
             )
             self.session.add_response(response)
-            
-            # Display results
+
             self._show_results(score, feedback)
-        
+
         except Exception as e:
             self.update_status(f"❌ Evaluation error: {str(e)}", "red")
     
@@ -664,6 +661,19 @@ class TOEICGUIApp:
             print(f"Error showing popup: {e}")
             self.update_status("❌ Error displaying dictionary popup", "red")
 
+    def _frames_to_wav_bytes(self, frames):
+        import io
+        import wave
+
+        buffer = io.BytesIO()
+        wf = wave.open(buffer, 'wb')
+        wf.setnchannels(1)
+        wf.setsampwidth(2)  # 16-bit
+        wf.setframerate(16000)
+        wf.writeframes(b''.join(frames))
+        wf.close()
+
+        return buffer.getvalue()
 
 def main():
     """Main entry point for the GUI application"""
