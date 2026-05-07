@@ -4,41 +4,34 @@ Part 1: Read Aloud Task
 """
 
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk
 import threading
 import speech_recognition as sr
-from datetime import datetime
 from typing import Optional, Dict, Any
 import uuid
 import pyaudio
-import wave
 import io
-import re
+import wave
 
 from src.agents.speaking_agent import TOEICSpeakingAgent, UserProfile, Response
 from src.core.part1_questions import Part1QuestionEngine
 from src.agents.evaluator_agent import ResponseEvaluator
-from src.core.feedback import FeedbackGenerator
 from src.agents.dictionary_agent import DictionaryAgent
 from src.ui.dictionary_popup import DictionaryPopup
 
 
 class TOEICGUIApp:
     """GUI Application for TOEIC Speaking Test - Part 1"""
-    
+
     def __init__(self, root: tk.Tk):
-        """
-        Initialize the GUI application
-        
-        Args:
-            root: Tkinter root window
-        """
+
         self.root = root
         self.root.title("TOEIC Speaking Test - Part 1: Read Aloud")
+
+        # ================= WINDOW SIZE FIX =================
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
 
-        # Leave margin for taskbar + padding
         width = int(screen_width * 0.9)
         height = int(screen_height * 0.8)
 
@@ -47,167 +40,383 @@ class TOEICGUIApp:
         y = (screen_height - height) // 2
         self.root.geometry(f"{width}x{height}+{x}+{y}")
         self.root.configure(bg="#f0f0f0")
-        
-        # Initialize components
+
+        # ================= COMPONENTS =================
+
         self.user_profile = UserProfile(
             user_id=str(uuid.uuid4())[:8],
             name="Test User",
             level="beginner"
         )
+
         self.agent = TOEICSpeakingAgent(self.user_profile)
-        self.question_engine = Part1QuestionEngine(level=self.user_profile.level)
+        self.question_engine = Part1QuestionEngine(
+            level=self.user_profile.level
+        )
+
         self.evaluator = ResponseEvaluator()
-        self.feedback_generator = FeedbackGenerator()
-        self.dictionary_agent = DictionaryAgent()  # Initialize Dictionary Agent
-        
-        # State variables
+        self.dictionary_agent = DictionaryAgent()
+
+        # ================= STATE =================
+
         self.current_question: Optional[Dict[str, Any]] = None
-        self.user_response_text: str = ""
+        self.user_response_text = ""
+
         self.is_recording = False
-        self.audio_data = None
-        self.audio_frames = []  # For manual continuous recording
+        self.audio_frames = []
+
         self.recognizer = sr.Recognizer()
         self.microphone = sr.Microphone()
-        
-        # Dictionary tracking
-        self.clickable_words: Dict[str, Dict[str, Any]] = {}  # word -> word_info
-        self.word_tags: Dict[str, str] = {}  # word -> tag_name for display
-        
-        # Session tracking
+
         self.session = None
         self.question_count = 0
-        
-        # Create UI
+
+        # Dictionary support
+        self.clickable_words = {}
+        self.word_tags = {}
+
+        # ================= UI =================
+
         self._create_ui()
         self._start_new_session()
         self._load_question()
-    
-    def _create_ui(self) -> None:
-        """Create the user interface"""
-        # Header
+
+    # =========================================================
+    # UI
+    # =========================================================
+
+    def _create_ui(self):
+
+        # =====================================================
+        # ROOT LAYOUT
+        # =====================================================
+
+        self.root.grid_rowconfigure(2, weight=1)
+        self.root.grid_columnconfigure(0, weight=1)
+
+        # =====================================================
+        # HEADER
+        # =====================================================
+
         header_frame = ttk.Frame(self.root)
-        header_frame.pack(fill=tk.X, padx=20, pady=10)
-        
+        header_frame.grid(
+            row=0,
+            column=0,
+            sticky="ew",
+            padx=20,
+            pady=(10, 5)
+        )
+
         title_label = ttk.Label(
             header_frame,
             text="TOEIC Speaking Test - Part 1: Read Aloud",
             font=("Arial", 16, "bold")
         )
+
         title_label.pack()
-        
-        # Level and session info
+
         info_label = ttk.Label(
             header_frame,
-            text=f"Level: {self.user_profile.level.upper()} | User: {self.user_profile.name}",
+            text=f"Level: {self.user_profile.level.upper()}",
             font=("Arial", 10),
             foreground="gray"
         )
+
         info_label.pack()
-        
-        # Status frame (top)
+
+        # =====================================================
+        # STATUS
+        # =====================================================
+
         status_frame = ttk.Frame(self.root)
-        status_frame.pack(fill=tk.X, padx=20, pady=5)
-        
+
+        status_frame.grid(
+            row=1,
+            column=0,
+            sticky="ew",
+            padx=20,
+            pady=(0, 5)
+        )
+
         self.status_label = ttk.Label(
             status_frame,
-            text="Ready to record. Click the microphone button to start.",
+            text="Ready to record.",
             font=("Arial", 10),
             foreground="green"
         )
+
         self.status_label.pack(anchor=tk.W)
-        
-        # Main content frame with two columns
+
+        # =====================================================
+        # MAIN CONTENT
+        # =====================================================
+
         content_frame = ttk.Frame(self.root)
-        content_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
-        content_frame.columnconfigure(0, weight=1)
-        content_frame.columnconfigure(1, weight=1)
-        
-        # =============== LEFT SIDE - TEXT DISPLAY ===============
-        left_frame = ttk.Frame(content_frame, relief=tk.SUNKEN, borderwidth=2)
-        left_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
-        left_frame.rowconfigure(1, weight=1)
-        
+
+        content_frame.grid(
+            row=2,
+            column=0,
+            sticky="nsew",
+            padx=20,
+            pady=10
+        )
+
+        content_frame.grid_rowconfigure(0, weight=1)
+        content_frame.grid_columnconfigure(0, weight=1)
+        content_frame.grid_columnconfigure(1, weight=1)
+
+        # =====================================================
+        # LEFT PANEL
+        # =====================================================
+
+        left_frame = ttk.Frame(
+            content_frame,
+            relief=tk.SUNKEN,
+            borderwidth=2
+        )
+
+        left_frame.grid(
+            row=0,
+            column=0,
+            sticky="nsew",
+            padx=(0, 10)
+        )
+
+        left_frame.grid_rowconfigure(2, weight=1)
+        left_frame.grid_columnconfigure(0, weight=1)
+
         question_label = ttk.Label(
             left_frame,
             text="Read the following text aloud:",
             font=("Arial", 11, "bold")
         )
-        question_label.pack(anchor=tk.W, padx=10, pady=(10, 5))
-        
-        # Instructions
+
+        question_label.grid(
+            row=0,
+            column=0,
+            sticky="w",
+            padx=10,
+            pady=(10, 5)
+        )
+
         instruction_label = ttk.Label(
             left_frame,
             text="⏱️ Speaking time: 45 seconds",
             font=("Arial", 9),
             foreground="blue"
         )
-        instruction_label.pack(anchor=tk.W, padx=10, pady=(0, 10))
-        
-        # Text to read
-        text_scroll_frame = ttk.Frame(left_frame)
-        text_scroll_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
-        
+
+        instruction_label.grid(
+            row=1,
+            column=0,
+            sticky="w",
+            padx=10,
+            pady=(0, 5)
+        )
+
+        # ================= QUESTION TEXT =================
+
+        question_container = ttk.Frame(left_frame)
+
+        question_container.grid(
+            row=2,
+            column=0,
+            sticky="nsew",
+            padx=10,
+            pady=10
+        )
+
+        question_container.grid_rowconfigure(0, weight=1)
+        question_container.grid_columnconfigure(0, weight=1)
+
+        question_scrollbar = ttk.Scrollbar(question_container)
+
+        question_scrollbar.grid(
+            row=0,
+            column=1,
+            sticky="ns"
+        )
+
         self.question_text = tk.Text(
-            text_scroll_frame,
-            font=("Arial", 13),
+            question_container,
+            font=("Segoe UI", 13),
             wrap=tk.WORD,
             bg="white",
             fg="#333333",
             relief=tk.FLAT,
-            padx=10,
-            pady=10
+            padx=12,
+            pady=12,
+            yscrollcommand=question_scrollbar.set
         )
-        self.question_text.pack(fill=tk.BOTH, expand=True)
-        self.question_text.config(state=tk.DISABLED)  # Start disabled
-        
-        # Configure tags for word highlighting and links
-        self.question_text.tag_config("clickable_word", foreground="blue", underline=True)
-        self.question_text.tag_config("hover_word", background="#e3f2fd")
-        
-        # Bind mouse events for dictionary interaction
-        self.question_text.bind("<Button-1>", self._on_text_click)
-        self.question_text.bind("<Motion>", self._on_text_motion)
-        self.question_text.bind("<Leave>", self._on_text_leave)
-        
-        # =============== RIGHT SIDE - FEEDBACK DISPLAY ===============
-        right_frame = ttk.Frame(content_frame, relief=tk.SUNKEN, borderwidth=2)
-        right_frame.grid(row=0, column=1, sticky="nsew", padx=(10, 0))
-        right_frame.rowconfigure(1, weight=1)
-        
+
+        self.question_text.grid(
+            row=0,
+            column=0,
+            sticky="nsew"
+        )
+
+        question_scrollbar.config(
+            command=self.question_text.yview
+        )
+
+        self.question_text.config(state=tk.DISABLED)
+
+        # =====================================================
+        # RIGHT PANEL
+        # =====================================================
+
+        right_frame = ttk.Frame(
+            content_frame,
+            relief=tk.SUNKEN,
+            borderwidth=2
+        )
+
+        right_frame.grid(
+            row=0,
+            column=1,
+            sticky="nsew",
+            padx=(10, 0)
+        )
+
+        right_frame.grid_rowconfigure(7, weight=1)
+        right_frame.grid_columnconfigure(0, weight=1)
+
         feedback_label = ttk.Label(
             right_frame,
             text="Feedback & Results:",
             font=("Arial", 11, "bold")
         )
-        feedback_label.pack(anchor=tk.W, padx=10, pady=(10, 5))
-        
-        # Feedback text with scrollbar
-        feedback_scroll_frame = ttk.Frame(right_frame)
-        feedback_scroll_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
-        
-        scrollbar = ttk.Scrollbar(feedback_scroll_frame)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
+
+        feedback_label.grid(
+            row=0,
+            column=0,
+            sticky="w",
+            padx=10,
+            pady=(10, 5)
+        )
+
+        # ================= PROGRESS BARS =================
+
+        ttk.Label(
+            right_frame,
+            text="Pronunciation"
+        ).grid(row=1, column=0, sticky="w", padx=10)
+
+        self.pronunciation_bar = ttk.Progressbar(
+            right_frame,
+            maximum=10
+        )
+
+        self.pronunciation_bar.grid(
+            row=2,
+            column=0,
+            sticky="ew",
+            padx=10,
+            pady=(0, 5)
+        )
+
+        ttk.Label(
+            right_frame,
+            text="Intonation & Stress"
+        ).grid(row=3, column=0, sticky="w", padx=10)
+
+        self.intonation_bar = ttk.Progressbar(
+            right_frame,
+            maximum=10
+        )
+
+        self.intonation_bar.grid(
+            row=4,
+            column=0,
+            sticky="ew",
+            padx=10,
+            pady=(0, 5)
+        )
+
+        ttk.Label(
+            right_frame,
+            text="Pausing / Phrasing"
+        ).grid(row=5, column=0, sticky="w", padx=10)
+
+        self.pausing_bar = ttk.Progressbar(
+            right_frame,
+            maximum=10
+        )
+
+        self.pausing_bar.grid(
+            row=6,
+            column=0,
+            sticky="ew",
+            padx=10,
+            pady=(0, 10)
+        )
+
+        # ================= RESULTS TEXT =================
+
+        results_container = ttk.Frame(right_frame)
+
+        results_container.grid(
+            row=7,
+            column=0,
+            sticky="nsew",
+            padx=10,
+            pady=(0, 10)
+        )
+
+        results_container.grid_rowconfigure(0, weight=1)
+        results_container.grid_columnconfigure(0, weight=1)
+
+        results_scrollbar = ttk.Scrollbar(results_container)
+
+        results_scrollbar.grid(
+            row=0,
+            column=1,
+            sticky="ns"
+        )
+
         self.results_text = tk.Text(
-            feedback_scroll_frame,
-            font=("Arial", 10),
+            results_container,
+            font=("Segoe UI", 11),
             wrap=tk.WORD,
             bg="#fffacd",
             fg="#333333",
             relief=tk.FLAT,
-            padx=10,
-            pady=10,
-            yscrollcommand=scrollbar.set
+            padx=12,
+            pady=12,
+            yscrollcommand=results_scrollbar.set
         )
-        self.results_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self.results_text.grid(
+            row=0,
+            column=0,
+            sticky="nsew"
+        )
+
+        results_scrollbar.config(
+            command=self.results_text.yview
+        )
+
         self.results_text.config(state=tk.DISABLED)
-        scrollbar.config(command=self.results_text.yview)
-        
-        # Controls frame
+
+        # =====================================================
+        # CONTROLS
+        # =====================================================
+
         controls_frame = ttk.Frame(self.root)
-        controls_frame.pack(fill=tk.X, padx=20, pady=10)
-        
-        # Microphone button (main control)
+
+        controls_frame.grid(
+            row=3,
+            column=0,
+            sticky="ew",
+            padx=20,
+            pady=(0, 15)
+        )
+
+        controls_frame.grid_columnconfigure(0, weight=1)
+        controls_frame.grid_columnconfigure(1, weight=1)
+        controls_frame.grid_columnconfigure(2, weight=1)
+        controls_frame.grid_columnconfigure(3, weight=1)
+
         self.mic_button = tk.Button(
             controls_frame,
             text="🎤 Start Recording",
@@ -215,14 +424,16 @@ class TOEICGUIApp:
             font=("Arial", 11, "bold"),
             bg="#4CAF50",
             fg="white",
-            padx=15,
-            pady=12,
-            relief=tk.RAISED,
-            cursor="hand2"
+            pady=12
         )
-        self.mic_button.pack(side=tk.LEFT, padx=5)
-        
-        # Stop button (hidden until recording)
+
+        self.mic_button.grid(
+            row=0,
+            column=0,
+            sticky="ew",
+            padx=5
+        )
+
         self.stop_button = tk.Button(
             controls_frame,
             text="⏹️ Stop Recording",
@@ -230,14 +441,20 @@ class TOEICGUIApp:
             font=("Arial", 11, "bold"),
             bg="#f44336",
             fg="white",
-            padx=15,
-            pady=12,
-            relief=tk.RAISED,
-            cursor="hand2"
+            pady=12
         )
-        # Hidden initially
-        
-        # Next question button
+
+        # IMPORTANT:
+        # Create hidden initially using lower()
+        self.stop_button.grid(
+            row=0,
+            column=1,
+            sticky="ew",
+            padx=5
+        )
+
+        self.stop_button.grid_remove()
+
         self.next_button = tk.Button(
             controls_frame,
             text="➡️ Next Question",
@@ -245,13 +462,16 @@ class TOEICGUIApp:
             font=("Arial", 11, "bold"),
             bg="#2196F3",
             fg="white",
-            padx=15,
-            pady=12,
-            relief=tk.RAISED,
-            cursor="hand2"
+            pady=12
         )
-        
-        # Reset button
+
+        self.next_button.grid(
+            row=0,
+            column=2,
+            sticky="ew",
+            padx=5
+        )
+
         self.reset_button = tk.Button(
             controls_frame,
             text="🔄 Reset",
@@ -259,121 +479,126 @@ class TOEICGUIApp:
             font=("Arial", 11, "bold"),
             bg="#FF9800",
             fg="white",
-            padx=15,
-            pady=12,
-            relief=tk.RAISED,
-            cursor="hand2"
+            pady=12
         )
-        self.reset_button.pack(side=tk.LEFT, padx=5)
-    
-    def _start_new_session(self) -> None:
-        """Start a new practice session"""
+
+        self.reset_button.grid(
+            row=0,
+            column=3,
+            sticky="ew",
+            padx=5
+        )
+
+    # =========================================================
+    # SESSION
+    # =========================================================
+
+    def _start_new_session(self):
         self.session = self.agent.start_session()
         self.question_count = 0
-        self.update_status("Session started. Ready for question 1.", "green")
-    
-    def _load_question(self) -> None:
-        """Load a new Part 1 (Read Aloud) question asynchronously"""
+
+    # =========================================================
+    # QUESTIONS
+    # =========================================================
+
+    def _load_question(self):
+
         self.question_count += 1
-        
-        # Show loading message immediately
+
         self.question_text.config(state=tk.NORMAL)
         self.question_text.delete("1.0", tk.END)
-        self.question_text.insert(tk.END, "⏳ Loading new question...\n\nPlease wait while the question is being prepared.")
+
+        self.question_text.insert(
+            tk.END,
+            "⏳ Loading new question..."
+        )
+
         self.question_text.config(state=tk.DISABLED)
-        
-        self.update_status(f"Loading question {self.question_count}...", "blue")
-        
-        # Disable controls while loading
-        self.mic_button.config(state=tk.DISABLED)
+
+        self.update_status("Loading question...", "blue")
+
+        thread = threading.Thread(
+            target=self._load_question_background,
+            daemon=True
+        )
+
+        thread.start()
+
+    def _load_question_background(self):
+
+        try:
+            self.current_question = self.question_engine.generate_question()
+
+            self.root.after(0, self._update_question_display)
+
+        except Exception as e:
+            self.root.after(
+                0,
+                lambda: self.update_status(f"❌ {e}", "red")
+            )
+
+    def _update_question_display(self):
+
+        self.question_text.config(state=tk.NORMAL)
+        self.question_text.delete("1.0", tk.END)
+
+        text = self.current_question.get("text", "")
+
+        self.question_text.insert(tk.END, text)
+
+        self._apply_word_tags()
+
+        self.question_text.config(state=tk.DISABLED)
+
+        self.update_status(
+            "Question loaded. Click microphone to start.",
+            "green"
+        )
+
+    # =========================================================
+    # RECORDING
+    # =========================================================
+
+    def _start_recording(self):
+
+        if self.is_recording:
+            return
+
+        self.is_recording = True
+
+        self.update_status(
+            "🔴 Recording...",
+            "red"
+        )
+
+        # Hide start button
+        self.mic_button.grid_remove()
+
+        # Show stop button
+        self.stop_button.grid()
+
+        # Disable other buttons
         self.next_button.config(state=tk.DISABLED)
         self.reset_button.config(state=tk.DISABLED)
-        
-        # Load question in background thread
-        loading_thread = threading.Thread(target=self._load_question_background)
-        loading_thread.daemon = True
-        loading_thread.start()
-    
-    def _load_question_background(self) -> None:
-        """Load question in background thread to prevent UI freezing"""
+
+        thread = threading.Thread(
+            target=self._record_audio,
+            daemon=True
+        )
+
+        thread.start()
+
+    def _record_audio(self):
+
         try:
-            # Generate a read_aloud question (may take time for LLM generation)
-            self.current_question = self.question_engine.generate_question()
-            
-            # Update UI from main thread
-            self.root.after(0, self._update_question_display)
-        
-        except Exception as e:
-            self.root.after(0, lambda: self.update_status(f"❌ Error loading question: {str(e)}", "red"))
-            self.root.after(0, self._enable_controls)
-    
-    def _update_question_display(self) -> None:
-        """Update the question display (called from main thread via after)"""
-        # Update question display
-        self.question_text.config(state=tk.NORMAL)
-        self.question_text.delete("1.0", tk.END)
-        self.question_text.insert(tk.END, self.current_question.get("text", ""))
-        
-        # Apply word tags for dictionary lookup (must be done with text enabled)
-        self._apply_word_tags()
-        
-        self.question_text.config(state=tk.DISABLED)
-        
-        # Reset UI state
-        self.user_response_text = ""
-        self.update_status(f"Question {self.question_count} loaded. Click words to see definitions. Click the microphone to record.", "blue")
-        
-        # Ensure recording controls are visible
-        if self.stop_button.winfo_manager():
-            self.stop_button.pack_forget()
-        if not self.mic_button.winfo_manager():
-            self.mic_button.pack(side=tk.LEFT, padx=5)
-        if self.next_button.winfo_manager():
-            self.next_button.pack_forget()
-        
-        # Re-enable controls
-        self._enable_controls()
-    
-    def _enable_controls(self) -> None:
-        """Re-enable control buttons after question is loaded"""
-        self.mic_button.config(state=tk.NORMAL)
-        self.next_button.config(state=tk.NORMAL)
-        self.reset_button.config(state=tk.NORMAL)
-    
-    def _start_recording(self) -> None:
-        """Start recording audio from microphone"""
-        self.is_recording = True
-        self.update_status("🔴 Recording... Read aloud and press STOP button when finished (max 60 seconds).", "red")
-        
-        # Update button state
-        self.mic_button.pack_forget()
-        self.stop_button.pack(side=tk.LEFT, padx=5)
-        
-        # Start recording in a separate thread
-        recording_thread = threading.Thread(target=self._record_audio)
-        recording_thread.daemon = True
-        recording_thread.start()
-    
-    def _show_recording_controls(self) -> None:
-        """Ensure recording controls are visible"""
-        if self.stop_button.winfo_manager():
-            self.stop_button.pack_forget()
-        if not self.mic_button.winfo_manager():
-            self.mic_button.pack(side=tk.LEFT, padx=5)
-    
-    def _record_audio(self) -> None:
-        """Record audio continuously until stop button is pressed"""
-        try:
-            # Audio recording parameters
+
             CHUNK = 1024
             FORMAT = pyaudio.paInt16
             CHANNELS = 1
-            RATE = 16000  # 16kHz sampling rate
-            
-            # Initialize PyAudio
+            RATE = 16000
+
             p = pyaudio.PyAudio()
-            
-            # Open audio stream
+
             stream = p.open(
                 format=FORMAT,
                 channels=CHANNELS,
@@ -381,99 +606,172 @@ class TOEICGUIApp:
                 input=True,
                 frames_per_buffer=CHUNK
             )
-            
+
             self.audio_frames = []
-            
-            # Record continuously until stop button is pressed
+
             while self.is_recording:
-                try:
-                    data = stream.read(CHUNK, exception_on_overflow=False)
-                    self.audio_frames.append(data)
-                except Exception as e:
-                    print(f"⚠ Recording error: {e}")
-                    break
-            
-            # Stop and close the stream
+                data = stream.read(
+                    CHUNK,
+                    exception_on_overflow=False
+                )
+
+                self.audio_frames.append(data)
+
             stream.stop_stream()
             stream.close()
             p.terminate()
-            
-            # Process the recorded audio
+
             if self.audio_frames:
                 self._process_recorded_audio()
-        
+
         except Exception as e:
-            self.update_status(f"❌ Recording error: {str(e)}", "red")
-        finally:
-            self.is_recording = False
-            self.root.after(0, self._stop_recording)
-    
-    def _process_recorded_audio(self) -> None:
+            self.update_status(f"❌ Recording error: {e}", "red")
+
+    def _stop_recording(self):
+
+        if not self.is_recording:
+            return
+
+        self.is_recording = False
+
+        # Hide stop button
+        self.stop_button.grid_remove()
+
+        # Restore start button
+        self.mic_button.grid()
+
+        # Re-enable controls
+        self.next_button.config(state=tk.NORMAL)
+        self.reset_button.config(state=tk.NORMAL)
+
+        self.update_status(
+            "Processing speech...",
+            "blue"
+        )
+
+    # =========================================================
+    # AUDIO PROCESSING
+    # =========================================================
+
+    def _process_recorded_audio(self):
+
         try:
-            self.update_status("🔄 Processing speech...", "blue")
 
-            # ✅ Convert to WAV bytes for Gemini
-            audio_bytes = self._frames_to_wav_bytes(self.audio_frames)
+            audio_bytes = self._frames_to_wav_bytes(
+                self.audio_frames
+            )
 
-            # ✅ Optional: keep STT for display only
             try:
-                audio = sr.AudioData(b''.join(self.audio_frames), 16000, 2)
-                self.user_response_text = self.recognizer.recognize_google(audio)
+                audio = sr.AudioData(
+                    b''.join(self.audio_frames),
+                    16000,
+                    2
+                )
+
+                self.user_response_text = (
+                    self.recognizer.recognize_google(audio)
+                )
+
             except:
                 self.user_response_text = "(Could not transcribe)"
 
-            # ✅ Evaluate with audio
-            self.root.after(0, lambda: self._evaluate_response(audio_bytes))
+            self.root.after(
+                0,
+                lambda: self._evaluate_response(audio_bytes)
+            )
 
         except Exception as e:
-            self.update_status(f"❌ Error: {str(e)}", "red")
-    
-    def _stop_recording(self) -> None:
-        """Stop recording and process the audio"""
-        self.is_recording = False
-        self.stop_button.pack_forget()
-        self.mic_button.pack(side=tk.LEFT, padx=5)
-        self.update_status("⏸️ Recording stopped. Processing your speech...", "blue")
-    
-    def _evaluate_response(self, audio_bytes: bytes) -> None:
+            self.update_status(f"❌ {e}", "red")
+
+    # =========================================================
+    # EVALUATION
+    # =========================================================
+
+    def _evaluate_response(self, audio_bytes: bytes):
+
         try:
-            score = self.evaluator.evaluate(
+
+            evaluation = self.evaluator.evaluate(
                 audio_bytes=audio_bytes,
                 user_response=self.user_response_text,
                 question=self.current_question,
                 user_level=self.user_profile.level
             )
 
-            feedback = self.feedback_generator.generate_feedback(
-                self.user_response_text,
-                self.current_question,
-                score
-            )
+            total_score = evaluation.get("total_score", 0.0)
 
             response = Response(
                 question_id=self.current_question.get("id", "unknown"),
                 user_text=self.user_response_text,
-                score=score,
-                feedback=feedback
+                score=total_score,
+                feedback=evaluation.get("overall_feedback", "")
             )
+
             self.session.add_response(response)
 
-            self._show_results(score, feedback)
+            self._show_results(evaluation)
 
         except Exception as e:
-            self.update_status(f"❌ Evaluation error: {str(e)}", "red")
-    
-    def _show_results(self, score: float, feedback: str) -> None:
-        """
-        Display evaluation results and feedback
-        
-        Args:
-            score: Score from evaluator
-            feedback: Feedback text
-        """
-        # Format and display results
+            self.update_status(f"❌ Evaluation error: {e}", "red")
+
+    def _show_results(self, evaluation: Dict[str, Any]):
+
+        total_score = evaluation.get("total_score", 0.0)
+
+        pronunciation = evaluation.get("pronunciation", {})
+        intonation = evaluation.get("intonation", {})
+        pausing = evaluation.get("pausing", {})
+
+        # ================= PROGRESS BARS =================
+
+        self.pronunciation_bar["value"] = pronunciation.get("score", 0)
+        self.intonation_bar["value"] = intonation.get("score", 0)
+        self.pausing_bar["value"] = pausing.get("score", 0)
+
+        # ================= FORMAT FUNCTION =================
+
+        def format_section(title, data):
+
+            score = data.get("score", 0)
+
+            strengths = data.get("strengths", [])
+            issues = data.get("issues", [])
+            tips = data.get("improvement_tips", [])
+
+            section = f"""
+🎯 {title}: {score}/10
+
+✅ Strengths:
+"""
+
+            if strengths:
+                for item in strengths:
+                    section += f"• {item}\n"
+            else:
+                section += "• None\n"
+
+            section += "\n⚠️ Areas to Improve:\n"
+
+            if issues:
+                for item in issues:
+                    section += f"• {item}\n"
+            else:
+                section += "• None\n"
+
+            section += "\n💡 Tips:\n"
+
+            if tips:
+                for item in tips:
+                    section += f"• {item}\n"
+            else:
+                section += "• None\n"
+
+            return section
+
+        # ================= RESULTS TEXT =================
+
         results_content = f"""
-📊 YOUR SCORE: {score:.1f}/10
+📊 TOTAL SCORE: {total_score:.1f}/10
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -482,203 +780,263 @@ class TOEICGUIApp:
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-💬 Feedback:
-{feedback}
+{format_section("Pronunciation", pronunciation)}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        """
-        
+
+{format_section("Intonation & Stress", intonation)}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+{format_section("Pausing / Phrasing", pausing)}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🧠 Overall Feedback:
+{evaluation.get("overall_feedback", "")}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+"""
+
         self.results_text.config(state=tk.NORMAL)
+
         self.results_text.delete("1.0", tk.END)
+
         self.results_text.insert(tk.END, results_content)
+
         self.results_text.config(state=tk.DISABLED)
-        
-        # Show next and reset buttons
+
+        self.results_text.yview_moveto(0)
+
         if not self.next_button.winfo_manager():
             self.next_button.pack(side=tk.LEFT, padx=5)
-        
-        self.update_status("✅ Evaluation complete! Click 'Next Question' to continue.", "green")
-    
-    def _next_question(self) -> None:
-        """Load the next question"""
+
+        self.update_status(
+            "✅ Evaluation complete!",
+            "green"
+        )
+
+    # =========================================================
+    # NAVIGATION
+    # =========================================================
+
+    def _next_question(self):
         self._load_question()
-    
-    def _reset(self) -> None:
-        """
-        Reset - generate new question and clear feedback
-        """
-        # Clear feedback
+
+    def _reset(self):
+
         self.results_text.config(state=tk.NORMAL)
         self.results_text.delete("1.0", tk.END)
         self.results_text.config(state=tk.DISABLED)
-        
-        # Hide next button
-        if self.next_button.winfo_manager():
-            self.next_button.pack_forget()
-        
-        # Load new question
+
+        self.pronunciation_bar["value"] = 0
+        self.intonation_bar["value"] = 0
+        self.pausing_bar["value"] = 0
+
         self._load_question()
-    
-    def update_status(self, message: str, color: str = "black") -> None:
-        """
-        Update status label
-        
-        Args:
-            message: Status message
-            color: Text color
-        """
-        self.status_label.config(text=message, foreground=color)
+
+    # =========================================================
+    # STATUS
+    # =========================================================
+
+    def update_status(self, message, color="black"):
+
+        self.status_label.config(
+            text=message,
+            foreground=color
+        )
+
         self.root.update()
-    
-    # ============ DICTIONARY FEATURE METHODS ============
-    
-    def _apply_word_tags(self) -> None:
-        """Apply clickable tags to words in the question text"""
+
+    # =========================================================
+    # DICTIONARY
+    # =========================================================
+
+    def _apply_word_tags(self):
+
         if not self.current_question:
             return
-        
-        text_content = self.question_text.get("1.0", tk.END).strip()
-        if not text_content:
-            return
-        
-        # Extract words suitable for dictionary
-        words = self.dictionary_agent.extract_words_from_text(text_content)
-        self.clickable_words = {}
-        
-        # Apply tags to each word
+
+        text_content = self.question_text.get(
+            "1.0",
+            tk.END
+        ).strip()
+
+        words = self.dictionary_agent.extract_words_from_text(
+            text_content
+        )
+
         self.question_text.config(state=tk.NORMAL)
+
         for word in words:
-            # Find all occurrences of the word (case-insensitive)
-            search_pattern = f"\\b{word}\\b"
+
             start_pos = "1.0"
-            
-            for occurrence in range(100):  # Search up to 100 occurrences
+
+            while True:
+
                 pos = self.question_text.search(
-                    search_pattern,
+                    rf"\b{word}\b",
                     start_pos,
                     nocase=True,
                     regexp=True
                 )
-                
+
                 if not pos:
                     break
-                
-                # Calculate end position
+
                 end_pos = f"{pos}+{len(word)}c"
-                
-                # Apply clickable tag
-                self.question_text.tag_add("clickable_word", pos, end_pos)
-                
-                # Store word info reference
-                word_key = f"{pos}:{end_pos}"
-                self.word_tags[word_key] = word
-                
-                # Move start position for next search
+
+                self.question_text.tag_add(
+                    "clickable_word",
+                    pos,
+                    end_pos
+                )
+
                 start_pos = end_pos
-        
+
         self.question_text.config(state=tk.DISABLED)
-    
-    def _on_text_click(self, event: tk.Event) -> None:
-        """Handle text click - show dictionary popup for clicked word"""
-        # Get position of click
-        pos = self.question_text.index(f"@{event.x},{event.y}")
-        
-        # Get the word at this position
+
+    def _on_text_click(self, event):
+
+        pos = self.question_text.index(
+            f"@{event.x},{event.y}"
+        )
+
         word = self._get_word_at_position(pos)
-        
-        if not word or len(word) < 3:
+
+        if not word:
             return
-        
-        # Show loading message
-        self.update_status(f"📚 Fetching definition for '{word}'...", "blue")
-        
-        # Fetch word info in background
+
+        self.update_status(
+            f"📚 Fetching '{word}'...",
+            "blue"
+        )
+
         thread = threading.Thread(
             target=self._fetch_word_info_async,
             args=(word,),
             daemon=True
         )
+
         thread.start()
-    
-    def _on_text_motion(self, event: tk.Event) -> None:
-        """Handle mouse motion - highlight words on hover"""
-        pos = self.question_text.index(f"@{event.x},{event.y}")
+
+    def _on_text_motion(self, event):
+
+        pos = self.question_text.index(
+            f"@{event.x},{event.y}"
+        )
+
         word = self._get_word_at_position(pos)
-        
-        # Remove all hover tags first
-        self.question_text.tag_remove("hover_word", "1.0", tk.END)
-        
-        # Apply hover tag if over a clickable word
-        if word and len(word) >= 3:
-            # Find and highlight this word occurrence
+
+        self.question_text.tag_remove(
+            "hover_word",
+            "1.0",
+            tk.END
+        )
+
+        if word:
+
             word_start = f"{pos} wordstart"
             word_end = f"{pos} wordend"
-            self.question_text.tag_add("hover_word", word_start, word_end)
+
+            self.question_text.tag_add(
+                "hover_word",
+                word_start,
+                word_end
+            )
+
             self.root.config(cursor="hand2")
+
         else:
             self.root.config(cursor="arrow")
-    
-    def _on_text_leave(self, event: tk.Event) -> None:
-        """Handle mouse leaving text area - remove hover highlight"""
-        self.question_text.tag_remove("hover_word", "1.0", tk.END)
+
+    def _on_text_leave(self, event):
+
+        self.question_text.tag_remove(
+            "hover_word",
+            "1.0",
+            tk.END
+        )
+
         self.root.config(cursor="arrow")
-    
-    def _get_word_at_position(self, pos: str) -> Optional[str]:
-        """Get the word at the given position in text widget"""
+
+    def _get_word_at_position(self, pos):
+
         try:
+
             word_start = f"{pos} wordstart"
             word_end = f"{pos} wordend"
-            word = self.question_text.get(word_start, word_end).strip()
-            
-            # Remove punctuation
-            import string
-            word = word.strip(string.punctuation)
-            
-            return word if word and len(word) >= 3 else None
+
+            word = self.question_text.get(
+                word_start,
+                word_end
+            )
+
+            word = word.strip(".,!?;:\"'()[]{}")
+
+            return word if len(word) >= 3 else None
+
         except:
             return None
-    
-    def _fetch_word_info_async(self, word: str) -> None:
-        """Fetch word information in background thread"""
+
+    def _fetch_word_info_async(self, word):
+
         try:
+
             word_info = self.dictionary_agent.get_word_info(word)
-            self.root.after(0, lambda: self._show_dictionary_popup(word_info))
-        except Exception as e:
-            print(f"Error fetching word info: {e}")
-            self.root.after(0, lambda: self.update_status(f"❌ Error fetching word info", "red"))
-    
-    def _show_dictionary_popup(self, word_info: Dict[str, Any]) -> None:
-        """Display dictionary popup with word information"""
-        try:
-            popup = DictionaryPopup(
-                self.root,
-                word_info,
-                on_close=lambda: self.update_status("Ready to continue", "green")
+
+            self.root.after(
+                0,
+                lambda: self._show_dictionary_popup(word_info)
             )
-            popup.show()
-            self.update_status(f"📖 Showing dictionary entry for '{word_info.get('word', 'word')}'", "green")
+
         except Exception as e:
-            print(f"Error showing popup: {e}")
-            self.update_status("❌ Error displaying dictionary popup", "red")
+            print(e)
+
+    def _show_dictionary_popup(self, word_info):
+
+        popup = DictionaryPopup(
+            self.root,
+            word_info,
+            on_close=lambda: self.update_status(
+                "Ready",
+                "green"
+            )
+        )
+
+        popup.show()
+
+    # =========================================================
+    # WAV CONVERSION
+    # =========================================================
 
     def _frames_to_wav_bytes(self, frames):
-        import io
-        import wave
 
         buffer = io.BytesIO()
+
         wf = wave.open(buffer, 'wb')
+
         wf.setnchannels(1)
-        wf.setsampwidth(2)  # 16-bit
+        wf.setsampwidth(2)
         wf.setframerate(16000)
+
         wf.writeframes(b''.join(frames))
+
         wf.close()
 
         return buffer.getvalue()
 
+
+# =============================================================
+# MAIN
+# =============================================================
+
 def main():
-    """Main entry point for the GUI application"""
+
     root = tk.Tk()
+
     app = TOEICGUIApp(root)
+
     root.mainloop()
 
 

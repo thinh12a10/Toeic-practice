@@ -1,17 +1,14 @@
 from typing import Dict, Any, Optional
 import os
+import json
+
 from google import genai
 from google.genai import types
 
 
 class ResponseEvaluator:
     """
-    TOEIC Speaking Part 1 Evaluator (Read Aloud)
-
-    Focus:
-    - Pronunciation
-    - Intonation & Stress
-    - Pausing / Phrasing
+    TOEIC Speaking Part 1 Evaluator
     """
 
     PRONUNCIATION_WEIGHT = 0.4
@@ -19,8 +16,13 @@ class ResponseEvaluator:
     PAUSING_WEIGHT = 0.3
 
     def __init__(self):
+
         gemini_api_key = os.getenv("GEMINI_API_KEY")
-        self.client = genai.Client(api_key=gemini_api_key)
+
+        self.client = genai.Client(
+            api_key=gemini_api_key
+        )
+
         self.last_evaluation = None
 
     def evaluate(
@@ -29,31 +31,38 @@ class ResponseEvaluator:
         user_response: str,
         question: Dict[str, Any],
         user_level: str = "intermediate"
-    ) -> float:
+    ) -> Dict[str, Any]:
 
         if not audio_bytes:
-            return 0.0
+            return {
+                "total_score": 0.0,
+                "feedback": "No audio detected."
+            }
 
-        scores = self._get_llm_evaluation(
+        result = self._get_llm_evaluation(
             audio_bytes,
             user_response,
             question,
             user_level
         )
 
-        if not scores:
-            print("⚠ Evaluator: fallback score used")
-            return 5.0
+        if not result:
+            return {
+                "total_score": 5.0,
+                "feedback": "Evaluation failed."
+            }
 
-        self.last_evaluation = scores
+        self.last_evaluation = result
 
         total_score = (
-            scores["pronunciation"] * self.PRONUNCIATION_WEIGHT +
-            scores["intonation"] * self.INTONATION_WEIGHT +
-            scores["pausing"] * self.PAUSING_WEIGHT
+            result["pronunciation"]["score"] * self.PRONUNCIATION_WEIGHT +
+            result["intonation"]["score"] * self.INTONATION_WEIGHT +
+            result["pausing"]["score"] * self.PAUSING_WEIGHT
         )
 
-        return min(10.0, max(0.0, total_score))
+        result["total_score"] = round(total_score, 1)
+
+        return result
 
     def _get_llm_evaluation(
         self,
@@ -61,51 +70,155 @@ class ResponseEvaluator:
         user_response: str,
         question: Dict[str, Any],
         user_level: str
-    ) -> Optional[Dict[str, float]]:
+    ) -> Optional[Dict[str, Any]]:
 
         original_text = question.get("text", "")
 
         prompt = f"""
-You are an expert TOEIC Speaking Part 1 evaluator (Read Aloud).
+You are a professional TOEIC Speaking evaluator.
 
-Evaluate the AUDIO based on TOEIC criteria.
+Evaluate the AUDIO only.
 
 ORIGINAL TEXT:
 {original_text}
 
-USER TRANSCRIPT (may be imperfect):
+USER TRANSCRIPT:
 {user_response}
 
-Focus ONLY on these 3 criteria:
+Evaluate:
 
-1. PRONUNCIATION (0-10)
-- Sound accuracy
-- Clarity of words
-- Mispronounced sounds
+1. Pronunciation
+2. Intonation & Stress
+3. Pausing / Phrasing
 
-2. INTONATION & STRESS (0-10)
-- Natural rise/fall of voice
-- Word stress
-- Sentence rhythm
-
-3. PAUSING / PHRASING (0-10)
-- Natural pauses
-- Chunking of phrases
-- Smooth flow (not word-by-word)
+SCORING:
+- 0 to 10
+- Use decimal scores if needed
 
 IMPORTANT:
-- Compare audio with ORIGINAL TEXT
-- Penalize skipped or incorrect words
-- Ignore grammar and vocabulary
-
-Return ONLY:
-
-PRONUNCIATION: X
-INTONATION: X
-PAUSING: X
+- Return ONLY valid JSON
+- Use double quotes
+- No markdown
+- No explanation outside JSON
 """
 
+        response_schema = {
+            "type": "object",
+            "properties": {
+                "pronunciation": {
+                    "type": "object",
+                    "properties": {
+                        "score": {
+                            "type": "number"
+                        },
+                        "strengths": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        },
+                        "issues": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        },
+                        "improvement_tips": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "required": [
+                        "score",
+                        "strengths",
+                        "issues",
+                        "improvement_tips"
+                    ]
+                },
+
+                "intonation": {
+                    "type": "object",
+                    "properties": {
+                        "score": {
+                            "type": "number"
+                        },
+                        "strengths": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        },
+                        "issues": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        },
+                        "improvement_tips": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "required": [
+                        "score",
+                        "strengths",
+                        "issues",
+                        "improvement_tips"
+                    ]
+                },
+
+                "pausing": {
+                    "type": "object",
+                    "properties": {
+                        "score": {
+                            "type": "number"
+                        },
+                        "strengths": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        },
+                        "issues": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        },
+                        "improvement_tips": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "required": [
+                        "score",
+                        "strengths",
+                        "issues",
+                        "improvement_tips"
+                    ]
+                },
+
+                "overall_feedback": {
+                    "type": "string"
+                }
+            },
+
+            "required": [
+                "pronunciation",
+                "intonation",
+                "pausing",
+                "overall_feedback"
+            ]
+        }
+
         try:
+
             response = self.client.models.generate_content(
                 model="models/gemini-3.1-flash-lite-preview",
                 contents=[
@@ -116,57 +229,61 @@ PAUSING: X
                     prompt
                 ],
                 config=types.GenerateContentConfig(
-                    temperature=0.3,
-                    max_output_tokens=200,
+                    temperature=0.2,
+                    max_output_tokens=700,
+                    response_mime_type="application/json",
+                    response_schema=response_schema
                 )
             )
 
-            llm_response = response.text.strip()
-            return self._parse_response(llm_response)
+            if not response.text:
+                print("⚠ Empty model response")
+                return None
+
+            text = response.text.strip()
+
+            try:
+                result = json.loads(text)
+
+            except json.JSONDecodeError as json_error:
+
+                print(f"⚠ JSON parse failed: {json_error}")
+
+                print("RAW MODEL RESPONSE:")
+                print(text)
+
+                return None
+
+            # ============================================
+            # VALIDATE REQUIRED FIELDS
+            # ============================================
+
+            required_sections = [
+                "pronunciation",
+                "intonation",
+                "pausing"
+            ]
+
+            for section in required_sections:
+
+                if section not in result:
+                    print(f"⚠ Missing section: {section}")
+                    return None
+
+                if "score" not in result[section]:
+                    print(f"⚠ Missing score in: {section}")
+                    return None
+
+            return result
 
         except Exception as e:
+
             print(f"⚠ Audio evaluation failed: {e}")
+
+            try:
+                print("RAW MODEL RESPONSE:")
+                print(response.text)
+            except:
+                pass
+
             return None
-
-    def _parse_response(self, response: str) -> Dict[str, float]:
-        scores = {
-            "pronunciation": 0.0,
-            "intonation": 0.0,
-            "pausing": 0.0
-        }
-
-        try:
-            lines = response.split("\n")
-
-            for line in lines:
-                line = line.strip().upper()
-
-                def extract(line):
-                    try:
-                        return float(line.split(":")[1].strip().split()[0])
-                    except:
-                        return None
-
-                if "PRONUNCIATION:" in line:
-                    val = extract(line)
-                    if val is not None:
-                        print(f"Extracted Pronunciation Score: {val}")
-                        scores["pronunciation"] = val
-
-                elif "INTONATION:" in line:
-                    val = extract(line)
-                    if val is not None:
-                        print(f"Extracted Intonation Score: {val}")
-                        scores["intonation"] = val
-
-                elif "PAUSING:" in line:
-                    val = extract(line)
-                    if val is not None:
-                        print(f"Extracted Pausing Score: {val}")
-                        scores["pausing"] = val
-
-            return scores
-
-        except Exception as e:
-            print(f"⚠ Parse error: {e}")
-            return scores
