@@ -65,7 +65,7 @@ class Part1QuestionEngine:
         try:
             prompt = self._build_generation_prompt()
             response = self.llm_client.models.generate_content(
-                model="models/gemma-3-12b-it",
+                model="models/gemma-4-31b-it",
                 contents=prompt
             )
             return response.text.strip()

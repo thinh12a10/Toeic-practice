@@ -6,17 +6,17 @@ from google.genai import types
 
 class ResponseEvaluator:
     """
-    Evaluates user responses using Gemini Audio Model
+    TOEIC Speaking Part 1 Evaluator (Read Aloud)
 
-    - Uses REAL audio for pronunciation & fluency
-    - Uses transcript for grammar/vocab support
+    Focus:
+    - Pronunciation
+    - Intonation & Stress
+    - Pausing / Phrasing
     """
 
-    FLUENCY_WEIGHT = 0.20
-    PRONUNCIATION_WEIGHT = 0.20
-    GRAMMAR_WEIGHT = 0.25
-    VOCABULARY_WEIGHT = 0.20
-    COHERENCE_WEIGHT = 0.15
+    PRONUNCIATION_WEIGHT = 0.4
+    INTONATION_WEIGHT = 0.3
+    PAUSING_WEIGHT = 0.3
 
     def __init__(self):
         gemini_api_key = os.getenv("GEMINI_API_KEY")
@@ -34,25 +34,23 @@ class ResponseEvaluator:
         if not audio_bytes:
             return 0.0
 
-        scores_dict = self._get_llm_evaluation(
+        scores = self._get_llm_evaluation(
             audio_bytes,
             user_response,
             question,
             user_level
         )
 
-        if not scores_dict:
+        if not scores:
             print("⚠ Evaluator: fallback score used")
             return 5.0
 
-        self.last_evaluation = scores_dict
+        self.last_evaluation = scores
 
         total_score = (
-            (scores_dict.get('fluency', 5.0) * self.FLUENCY_WEIGHT) +
-            (scores_dict.get('grammar', 5.0) * self.GRAMMAR_WEIGHT) +
-            (scores_dict.get('vocabulary', 5.0) * self.VOCABULARY_WEIGHT) +
-            (scores_dict.get('coherence', 5.0) * self.COHERENCE_WEIGHT) +
-            (scores_dict.get('pronunciation', 5.0) * self.PRONUNCIATION_WEIGHT)
+            scores["pronunciation"] * self.PRONUNCIATION_WEIGHT +
+            scores["intonation"] * self.INTONATION_WEIGHT +
+            scores["pausing"] * self.PAUSING_WEIGHT
         )
 
         return min(10.0, max(0.0, total_score))
@@ -66,44 +64,50 @@ class ResponseEvaluator:
     ) -> Optional[Dict[str, float]]:
 
         original_text = question.get("text", "")
-        task_type = question.get("task_type", "read_aloud")
 
         prompt = f"""
-    You are an expert TOEIC Speaking evaluator.
+You are an expert TOEIC Speaking Part 1 evaluator (Read Aloud).
 
-    TASK: {task_type}
-    LEVEL: {user_level}
+Evaluate the AUDIO based on TOEIC criteria.
 
-    ORIGINAL TEXT:
-    {original_text}
+ORIGINAL TEXT:
+{original_text}
 
-    USER TRANSCRIPT:
-    {user_response}
+USER TRANSCRIPT (may be imperfect):
+{user_response}
 
-    IMPORTANT:
-    - Evaluate using the AUDIO primarily
-    - Compare with ORIGINAL TEXT
-    - Penalize missing or incorrect words
+Focus ONLY on these 3 criteria:
 
-    Score from 0-10:
+1. PRONUNCIATION (0-10)
+- Sound accuracy
+- Clarity of words
+- Mispronounced sounds
 
-    FLUENCY:
-    PRONUNCIATION:
-    GRAMMAR:
-    VOCABULARY:
-    COHERENCE:
+2. INTONATION & STRESS (0-10)
+- Natural rise/fall of voice
+- Word stress
+- Sentence rhythm
 
-    Return ONLY:
-    FLUENCY: X
-    PRONUNCIATION: X
-    GRAMMAR: X
-    VOCABULARY: X
-    COHERENCE: X
-    """
+3. PAUSING / PHRASING (0-10)
+- Natural pauses
+- Chunking of phrases
+- Smooth flow (not word-by-word)
+
+IMPORTANT:
+- Compare audio with ORIGINAL TEXT
+- Penalize skipped or incorrect words
+- Ignore grammar and vocabulary
+
+Return ONLY:
+
+PRONUNCIATION: X
+INTONATION: X
+PAUSING: X
+"""
 
         try:
             response = self.client.models.generate_content(
-                model="gemini-2.5-flash",  # ✅ FIXED MODEL
+                model="models/gemini-3.1-flash-lite-preview",
                 contents=[
                     types.Part.from_bytes(
                         data=audio_bytes,
@@ -118,57 +122,48 @@ class ResponseEvaluator:
             )
 
             llm_response = response.text.strip()
-
-            return self._parse_evaluation_response(llm_response)
+            return self._parse_response(llm_response)
 
         except Exception as e:
             print(f"⚠ Audio evaluation failed: {e}")
             return None
-    def _parse_evaluation_response(self, response: str) -> Dict[str, float]:
+
+    def _parse_response(self, response: str) -> Dict[str, float]:
         scores = {
-            'fluency': 5.0,
-            'pronunciation': 5.0,
-            'grammar': 5.0,
-            'vocabulary': 5.0,
-            'coherence': 5.0
+            "pronunciation": 0.0,
+            "intonation": 0.0,
+            "pausing": 0.0
         }
 
         try:
-            lines = response.split('\n')
+            lines = response.split("\n")
 
             for line in lines:
                 line = line.strip().upper()
 
-                def extract_value(text):
+                def extract(line):
                     try:
-                        return float(text.split(":")[1].strip().split()[0])
+                        return float(line.split(":")[1].strip().split()[0])
                     except:
                         return None
 
-                if "FLUENCY:" in line:
-                    val = extract_value(line)
+                if "PRONUNCIATION:" in line:
+                    val = extract(line)
                     if val is not None:
-                        scores['fluency'] = min(10, max(0, val))
+                        print(f"Extracted Pronunciation Score: {val}")
+                        scores["pronunciation"] = val
 
-                elif "PRONUNCIATION:" in line:
-                    val = extract_value(line)
+                elif "INTONATION:" in line:
+                    val = extract(line)
                     if val is not None:
-                        scores['pronunciation'] = min(10, max(0, val))
+                        print(f"Extracted Intonation Score: {val}")
+                        scores["intonation"] = val
 
-                elif "GRAMMAR:" in line:
-                    val = extract_value(line)
+                elif "PAUSING:" in line:
+                    val = extract(line)
                     if val is not None:
-                        scores['grammar'] = min(10, max(0, val))
-
-                elif "VOCABULARY:" in line:
-                    val = extract_value(line)
-                    if val is not None:
-                        scores['vocabulary'] = min(10, max(0, val))
-
-                elif "COHERENCE:" in line:
-                    val = extract_value(line)
-                    if val is not None:
-                        scores['coherence'] = min(10, max(0, val))
+                        print(f"Extracted Pausing Score: {val}")
+                        scores["pausing"] = val
 
             return scores
 

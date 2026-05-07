@@ -40,7 +40,7 @@ class TOEICGUIApp:
 
         # Leave margin for taskbar + padding
         width = int(screen_width * 0.9)
-        height = int(screen_height * 0.85)
+        height = int(screen_height * 0.8)
 
         # Center the window
         x = (screen_width - width) // 2
