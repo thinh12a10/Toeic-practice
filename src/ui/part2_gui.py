@@ -1,6 +1,6 @@
 """
 TOEIC Speaking Test - GUI Application for Part 2
-Part 2: Repeat Task - Listen and repeat spoken text
+Part 2: Describe a Picture Task - Speaking to describe an image
 """
 
 import tkinter as tk
@@ -11,20 +11,16 @@ from datetime import datetime
 from typing import Optional, Dict, Any
 import uuid
 import pyaudio
-import wave
 import time
-import os
-import tempfile
 
 from src.agents.speaking_agent import TOEICSpeakingAgent, UserProfile, Response
 from src.core.part2_questions import Part2QuestionsEngine
-from src.core.text_to_speech import TextToSpeechGenerator
 from src.agents.evaluator_agent import ResponseEvaluator
 from src.core.feedback import FeedbackGenerator
 
 
 class Part2GUIApp:
-    """GUI Application for TOEIC Speaking Test - Part 2 (Repeat)"""
+    """GUI Application for TOEIC Speaking Test - Part 2 (Describe a Picture)"""
     
     def __init__(self, root: tk.Tk):
         """
@@ -33,9 +29,21 @@ class Part2GUIApp:
         Args:
             root: Tkinter root window
         """
+        # ================= WINDOW SIZE FIX =================
         self.root = root
-        self.root.title("TOEIC Speaking Test - Part 2: Repeat")
-        self.root.geometry("1200x850")
+        self.root.title("TOEIC Speaking Test - Part 2: Describe a Picture")
+        
+
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+
+        width = int(screen_width * 0.9)
+        height = int(screen_height * 0.8)
+
+        # Center the window
+        x = (screen_width - width) // 2
+        y = (screen_height - height) // 2
+        self.root.geometry(f"{width}x{height}+{x}+{y}")
         self.root.configure(bg="#f0f0f0")
         
         # Initialize components
@@ -46,7 +54,6 @@ class Part2GUIApp:
         )
         self.agent = TOEICSpeakingAgent(self.user_profile)
         self.question_engine = Part2QuestionsEngine(level=self.user_profile.level)
-        self.tts_generator = TextToSpeechGenerator(provider="pyttsx3")
         self.evaluator = ResponseEvaluator()
         self.feedback_generator = FeedbackGenerator()
         
@@ -55,19 +62,15 @@ class Part2GUIApp:
         self.user_response_text: str = ""
         self.is_recording = False
         self.audio_frames = []
+        self.audio_bytes: bytes = b''
         self.recognizer = sr.Recognizer()
         self.microphone = sr.Microphone()
         self.is_loading_question = False  # Prevent concurrent question loads
         
-        # Audio playback state
-        self.audio_data: Optional[bytes] = None
-        self.is_playing = False
-        self.audio_cache: Dict[str, bytes] = {}  # Cache generated audio
-        self.next_audio_data: Optional[bytes] = None  # Pre-generated audio for next question
-        
         # Timer state
-        self.listening_time_remaining = 0
-        self.recording_time_remaining = 0
+        self.preparation_time_remaining = 0
+        self.speaking_time_remaining = 0
+        self.in_preparation_phase = True  # Track if user is in prep or speaking phase
         
         # Session tracking
         self.session = None
@@ -76,9 +79,7 @@ class Part2GUIApp:
         # Create UI first (before any status updates)
         self._create_ui()
         
-        # Pre-initialize TTS engine (avoid delay on first use)
         self.update_status("Initializing...", "blue")
-        self._initialize_tts()
         
         self._start_new_session()
         self._load_question()
@@ -91,7 +92,7 @@ class Part2GUIApp:
         
         title_label = ttk.Label(
             header_frame,
-            text="TOEIC Speaking Test - Part 2: Repeat",
+            text="TOEIC Speaking Test - Part 2: Describe a Picture",
             font=("Arial", 16, "bold")
         )
         title_label.pack()
@@ -111,7 +112,7 @@ class Part2GUIApp:
         
         self.status_label = ttk.Label(
             status_frame,
-            text="Ready. Click PLAY AUDIO to hear the sentence.",
+            text="Ready. Read the prompt and prepare your description.",
             font=("Arial", 10),
             foreground="green"
         )
@@ -137,19 +138,21 @@ class Part2GUIApp:
         
         # Instructions text
         instructions_text = """
-1. Click "PLAY AUDIO" button to hear the sentence
+1. Read the picture description prompt carefully
 
-2. You will have 15 seconds to listen
+2. You will have 10 seconds to prepare
 
-3. After listening, click "START RECORDING"
+3. After preparation time, click "START RECORDING"
 
-4. You will have 15 seconds to repeat what you heard
+4. You will have 45 seconds to describe the picture
 
-5. Speak clearly and naturally
+5. Use complete sentences and descriptive language
 
-6. Click "STOP RECORDING" when done
+6. Try to use varied vocabulary and grammar
 
-7. Click "NEXT QUESTION" to continue
+7. Click "STOP RECORDING" when done or when time runs out
+
+8. Click "NEXT QUESTION" to continue
         """
         
         instr_display = tk.Text(
@@ -205,29 +208,14 @@ class Part2GUIApp:
         controls_frame = ttk.Frame(self.root)
         controls_frame.pack(fill=tk.X, padx=20, pady=10)
         
-        # Play Audio button
-        self.play_button = tk.Button(
+        # Preparation timer label
+        self.prep_timer_label = ttk.Label(
             controls_frame,
-            text="🔊 Play Audio",
-            command=self._play_audio,
-            font=("Arial", 11, "bold"),
-            bg="#2196F3",
-            fg="white",
-            padx=15,
-            pady=12,
-            relief=tk.RAISED,
-            cursor="hand2"
-        )
-        self.play_button.pack(side=tk.LEFT, padx=5)
-        
-        # Timer label for listening
-        self.listen_timer_label = ttk.Label(
-            controls_frame,
-            text="Listening time: --",
+            text="Preparation time: --",
             font=("Arial", 10),
             foreground="blue"
         )
-        self.listen_timer_label.pack(side=tk.LEFT, padx=20)
+        self.prep_timer_label.pack(side=tk.LEFT, padx=20)
         
         # Separator
         sep1 = ttk.Separator(controls_frame, orient=tk.VERTICAL)
@@ -262,14 +250,14 @@ class Part2GUIApp:
             cursor="hand2"
         )
         
-        # Timer label for recording
-        self.record_timer_label = ttk.Label(
+        # Timer label for speaking
+        self.speak_timer_label = ttk.Label(
             controls_frame,
-            text="Recording time: --",
+            text="Speaking time: --",
             font=("Arial", 10),
             foreground="red"
         )
-        self.record_timer_label.pack(side=tk.LEFT, padx=20)
+        self.speak_timer_label.pack(side=tk.LEFT, padx=20)
         
         # Separator
         sep2 = ttk.Separator(controls_frame, orient=tk.VERTICAL)
@@ -309,15 +297,6 @@ class Part2GUIApp:
         """Update status label"""
         self.status_label.config(text=message, foreground=color)
     
-    def _initialize_tts(self) -> None:
-        """Pre-initialize TTS engine to avoid delay on first use"""
-        try:
-            # This initializes pyttsx3 immediately
-            _ = self.tts_generator.engine
-            print("✓ TTS engine pre-initialized")
-        except Exception as e:
-            print(f"⚠ TTS pre-initialization warning: {e}")
-    
     def _start_new_session(self) -> None:
         """Start a new practice session"""
         self.session = self.agent.start_session()
@@ -335,11 +314,11 @@ class Part2GUIApp:
         
         # Clean up previous state
         self.is_recording = False
+        self.in_preparation_phase = True
         self.audio_frames = []  # Clear old audio frames
         self.user_response_text = ""
         
         # Disable controls
-        self.play_button.config(state=tk.DISABLED)
         self.mic_button.config(state=tk.DISABLED)
         self.next_button.config(state=tk.DISABLED)
         self.reset_button.config(state=tk.DISABLED)
@@ -356,24 +335,9 @@ class Part2GUIApp:
         try:
             # Generate question
             self.current_question = self.question_engine.generate_question()
-            sentence_text = self.current_question.get("text", "")
-            
-            # Check cache first, otherwise use pre-generated audio or generate new
-            if sentence_text in self.audio_cache:
-                self.audio_data = self.audio_cache[sentence_text]
-            elif self.next_audio_data:
-                self.audio_data = self.next_audio_data
-                self.audio_cache[sentence_text] = self.audio_data
-                self.next_audio_data = None
-            else:
-                self.audio_data = self.tts_generator.text_to_speech(sentence_text)
-                self.audio_cache[sentence_text] = self.audio_data
             
             # Update UI from main thread
             self.root.after(0, self._update_question_display)
-            
-            # Pre-generate next question's audio in background
-            self.root.after(0, self._pregenerate_next_audio)
         
         except Exception as e:
             error_msg = str(e)
@@ -387,7 +351,7 @@ class Part2GUIApp:
         self.stop_button.pack_forget()
         self.mic_button.pack(side=tk.LEFT, padx=5)
         
-        # Update results text
+        # Update results text with picture description prompt
         self.results_text.config(state=tk.NORMAL)
         self.results_text.delete("1.0", tk.END)
         
@@ -395,156 +359,59 @@ class Part2GUIApp:
 Topic: {self.current_question.get('topic', 'General').upper()}
 Difficulty: {self.current_question.get('difficulty', 'Unknown').upper()}
 
-Sentence to repeat:
-"{self.current_question.get('text', '')}"
+Picture Description Prompt:
+{self.current_question.get('prompt', '')}
 
-Status: Ready to play audio
+Status: Prepare your description (10 seconds)
         """
         
         self.results_text.insert(tk.END, result_text)
         self.results_text.config(state=tk.DISABLED)
         
-        self.update_status("Question loaded. Click PLAY AUDIO to hear the sentence.", "blue")
+        self.update_status("Question loaded. Preparation phase starting in 3 seconds...", "blue")
         self._enable_controls()
+        
+        # Start preparation phase after a brief delay
+        self.root.after(3000, self._start_preparation_phase)
         
         # Mark question loading as complete
         self.is_loading_question = False
     
     def _enable_controls(self) -> None:
         """Enable controls"""
-        self.play_button.config(state=tk.NORMAL)
         self.mic_button.config(state=tk.NORMAL)
         self.next_button.config(state=tk.NORMAL)
         self.reset_button.config(state=tk.NORMAL)
     
-    def _pregenerate_next_audio(self) -> None:
-        """Pre-generate next question's audio in background while user works on current"""
-        def generate_next():
-            try:
-                next_question = self.question_engine.generate_question()
-                next_text = next_question.get("text", "")
-                
-                # Only generate if not already cached
-                if next_text not in self.audio_cache:
-                    self.next_audio_data = self.tts_generator.text_to_speech(next_text)
-            except Exception as e:
-                print(f"⚠ Next audio pre-generation failed: {e}")
-        
-        pregenerate_thread = threading.Thread(target=generate_next, daemon=True)
-        pregenerate_thread.start()
+    def _start_preparation_phase(self) -> None:
+        """Start the 10-second preparation phase"""
+        self.in_preparation_phase = True
+        self.preparation_time_remaining = 10
+        self.mic_button.config(state=tk.DISABLED)  # Can't record during prep
+        self.update_status("📖 PREPARATION PHASE: Read the prompt carefully (10 seconds)", "blue")
+        self._run_preparation_timer()
     
-    def _play_audio(self) -> None:
-        """Play audio"""
-        if self.is_playing:
-            self.update_status("Audio is already playing...", "blue")
-            return
-        
-        self.update_status("🔊 Playing audio... (15 seconds)", "blue")
-        self.play_button.config(state=tk.DISABLED)
-        self.mic_button.config(state=tk.DISABLED)
-        
-        play_thread = threading.Thread(target=self._play_audio_background)
-        play_thread.daemon = True
-        play_thread.start()
-    
-    def _play_audio_background(self) -> None:
-        """Play audio in background"""
-        try:
-            import pyaudio
-            import struct
-            
-            if not self.audio_data:
-                self.root.after(0, lambda: self.update_status("❌ No audio data available", "red"))
-                self.root.after(0, self._enable_controls)
-                return
-            
-            self.is_playing = True
-            
-            # Save audio data to temporary file and play it
-            fd, temp_audio = tempfile.mkstemp(suffix='.wav', text=False)
-            os.close(fd)
-            
-            try:
-                # Write audio to temporary file
-                with open(temp_audio, 'wb') as f:
-                    f.write(self.audio_data)
-                
-                # Play the audio file using pyaudio
-                with wave.open(temp_audio, 'rb') as wav_file:
-                    # Get audio parameters
-                    n_channels = wav_file.getnchannels()
-                    sample_width = wav_file.getsampwidth()
-                    frame_rate = wav_file.getframerate()
-                    n_frames = wav_file.getnframes()
-                    
-                    # Create pyaudio stream
-                    p = pyaudio.PyAudio()
-                    stream = p.open(
-                        format=p.get_format_from_width(sample_width),
-                        channels=n_channels,
-                        rate=frame_rate,
-                        output=True
-                    )
-                    
-                    # Play audio in chunks
-                    chunk_size = 1024
-                    total_frames = n_frames
-                    frames_played = 0
-                    listening_time = 15  # Max 15 seconds
-                    start_time = time.time()
-                    
-                    while frames_played < total_frames and self.is_playing:
-                        elapsed = time.time() - start_time
-                        if elapsed >= listening_time:
-                            break
-                        
-                        data = wav_file.readframes(chunk_size)
-                        if not data:
-                            break
-                        
-                        stream.write(data)
-                        frames_played += chunk_size
-                        
-                        # Update timer
-                        remaining = listening_time - int(elapsed)
-                        self.root.after(0, lambda r=remaining: self.listen_timer_label.config(text=f"Listening time: {r}s"))
-                    
-                    stream.stop_stream()
-                    stream.close()
-                    p.terminate()
-            
-            finally:
-                # Cleanup temp file
-                if os.path.exists(temp_audio):
-                    try:
-                        os.remove(temp_audio)
-                    except:
-                        pass
-            
-            self.is_playing = False
-            self.root.after(0, self._after_listening)
-        
-        except Exception as e:
-            self.root.after(0, lambda: self.update_status(f"❌ Playback error: {str(e)}", "red"))
-            self.is_playing = False
-            self.root.after(0, self._enable_controls)
-    
-    def _after_listening(self) -> None:
-        """After listening period ends"""
-        self.listen_timer_label.config(text="Listening time: --")
-        self.update_status("✓ Listening time complete. Click START RECORDING to begin your repetition.", "green")
-        self.play_button.config(state=tk.NORMAL)
-        self.mic_button.config(state=tk.NORMAL)
+    def _run_preparation_timer(self) -> None:
+        """Run the preparation countdown timer"""
+        if self.preparation_time_remaining > 0:
+            self.prep_timer_label.config(text=f"Preparation time: {self.preparation_time_remaining}s")
+            self.preparation_time_remaining -= 1
+            self.root.after(1000, self._run_preparation_timer)
+        else:
+            # Preparation phase complete, ready to record
+            self.in_preparation_phase = False
+            self.prep_timer_label.config(text="Preparation time: DONE")
+            self.update_status("🎤 SPEAKING PHASE: Start recording your description (45 seconds)", "blue")
+            self.mic_button.config(state=tk.NORMAL)  # Now can record
     
     def _start_recording(self) -> None:
-        """Start recording"""
+        """Start recording the picture description"""
         self.is_recording = True
-        self.update_status("🔴 Recording... Repeat what you heard (15 seconds max).", "red")
+        self.update_status("🔴 Recording... Describe the picture (45 seconds max).", "red")
         
         # Update button state
         self.mic_button.pack_forget()
         self.stop_button.pack(side=tk.LEFT, padx=5)
-        self.play_button.config(state=tk.DISABLED)
         
         recording_thread = threading.Thread(target=self._record_audio)
         recording_thread.daemon = True
@@ -557,7 +424,7 @@ Status: Ready to play audio
             FORMAT = pyaudio.paInt16
             CHANNELS = 1
             RATE = 16000
-            MAX_RECORD_TIME = 15
+            MAX_RECORD_TIME = 45  # 45 seconds for picture description
             
             p = pyaudio.PyAudio()
             
@@ -572,7 +439,7 @@ Status: Ready to play audio
             self.audio_frames = []
             start_time = time.time()
             
-            # Record for max 15 seconds or until stopped
+            # Record for max 45 seconds or until stopped
             while self.is_recording:
                 elapsed = time.time() - start_time
                 if elapsed >= MAX_RECORD_TIME:
@@ -580,7 +447,7 @@ Status: Ready to play audio
                     break
                 
                 remaining = int(MAX_RECORD_TIME - elapsed)
-                self.root.after(0, lambda r=remaining: self.record_timer_label.config(text=f"Recording time: {r}s"))
+                self.root.after(0, lambda r=remaining: self.speak_timer_label.config(text=f"Speaking time: {r}s"))
                 
                 try:
                     data = stream.read(CHUNK, exception_on_overflow=False)
@@ -605,7 +472,7 @@ Status: Ready to play audio
     def _stop_recording(self) -> None:
         """Stop recording"""
         self.is_recording = False
-        self.record_timer_label.config(text="Recording time: --")
+        self.speak_timer_label.config(text="Speaking time: --")
         
         # Update button state
         self.stop_button.pack_forget()
@@ -625,19 +492,23 @@ Status: Ready to play audio
         """Background thread for audio processing and evaluation"""
         try:
             # Convert audio frames to audio data
-            audio_data = b''.join(self.audio_frames)
+            audio_bytes = b''.join(self.audio_frames)
+            self.audio_bytes = audio_bytes
             
             # Recognize speech
             self.root.after(0, lambda: self.update_status("🎤 Recognizing speech...", "blue"))
             try:
-                result = self.recognizer.recognize_google(
-                    sr.AudioData(audio_data, 16000, 2)
-                )
+                # Create AudioData object with proper parameters
+                # sr.AudioData(audio_bytes, sample_rate, sample_width)
+                audio_data = sr.AudioData(audio_bytes, 16000, 2)
+                result = self.recognizer.recognize_google(audio_data)
                 self.user_response_text = result
             except sr.UnknownValueError:
                 self.user_response_text = "[Speech not recognized]"
             except sr.RequestError as e:
                 self.user_response_text = f"[API error: {e}]"
+            except Exception as e:
+                self.user_response_text = f"[Recognition error: {str(e)}]"
             
             # Get evaluation feedback
             self.root.after(0, lambda: self.update_status("📊 Evaluating your response...", "blue"))
@@ -646,19 +517,6 @@ Status: Ready to play audio
         except Exception as e:
             error_msg = str(e)
             self.root.after(0, lambda msg=error_msg: self.update_status(f"❌ Error processing audio: {msg}", "red"))
-    
-    def _create_wav_from_frames(self, audio_data: bytes, rate: int, channels: int) -> bytes:
-        """Create WAV file from audio frames"""
-        import io
-        
-        wav_buffer = io.BytesIO()
-        with wave.open(wav_buffer, 'wb') as wav_file:
-            wav_file.setnchannels(channels)
-            wav_file.setsampwidth(2)
-            wav_file.setframerate(rate)
-            wav_file.writeframes(audio_data)
-        
-        return wav_buffer.getvalue()
     
     def _get_feedback(self) -> None:
         """Get evaluation feedback in background"""
@@ -670,16 +528,20 @@ Status: Ready to play audio
         """Background thread for getting feedback"""
         try:
             # Get evaluation (this can be slow with LLM)
-            score = self.evaluator.evaluate(
+            result = self.evaluator.evaluate(
                 user_response=self.user_response_text,
+                audio_bytes=self.audio_bytes,
                 question=self.current_question,
                 user_level=self.user_profile.level
             )
             
-            # Get feedback text from evaluator's last evaluation
+            # Extract total score (already 0-10 scale)
+            total_score = result.get('total_score', 0)
+            
+            # Get feedback text from evaluator result
             evaluation = {
-                'score': int(score * 10),  # Convert 0-10 to 0-100
-                'feedback': self._format_evaluation_feedback(self.evaluator.last_evaluation)
+                'score': int(total_score * 10),  # Convert 0-10 to 0-100
+                'feedback': self._format_evaluation_feedback(result)
             }
             
             # Update UI from main thread
@@ -699,8 +561,8 @@ Status: Ready to play audio
             feedback_text = f"""Question {self.question_count}
 Topic: {self.current_question.get('topic', 'General').upper()}
 
-Original Sentence:
-"{self.current_question.get('text', '')}"
+Picture Description Prompt:
+{self.current_question.get('prompt', '')}
 
 Your Response:
 "{self.user_response_text}"
@@ -714,39 +576,50 @@ Feedback:
             self.results_text.config(state=tk.DISABLED)
             
             self.update_status("✓ Evaluation complete. Click NEXT QUESTION to continue.", "green")
-            self.play_button.config(state=tk.DISABLED)
             self.mic_button.config(state=tk.DISABLED)
         
         except Exception as e:
             error_msg = str(e)
             self.update_status(f"❌ Error displaying feedback: {error_msg}", "red")
     
-    def _format_evaluation_feedback(self, scores_dict: Optional[Dict[str, float]]) -> str:
+    def _format_evaluation_feedback(self, result_dict: Optional[Dict[str, Any]]) -> str:
         """Format evaluation scores into readable feedback"""
-        if not scores_dict:
+        if not result_dict:
             return "Unable to generate detailed feedback."
         
         feedback_lines = []
         
-        if 'fluency' in scores_dict:
-            fluency_score = scores_dict['fluency']
-            feedback_lines.append(f"• Fluency: {fluency_score}/10 - {'Excellent' if fluency_score >= 8 else 'Good' if fluency_score >= 6 else 'Needs improvement'}")
-        
-        if 'pronunciation' in scores_dict:
-            pron_score = scores_dict['pronunciation']
+        # Extract scores from the evaluation result
+        if 'pronunciation' in result_dict and isinstance(result_dict['pronunciation'], dict):
+            pron_score = result_dict['pronunciation'].get('score', 0)
             feedback_lines.append(f"• Pronunciation: {pron_score}/10 - {'Excellent' if pron_score >= 8 else 'Good' if pron_score >= 6 else 'Needs improvement'}")
+            
+            # Add pronunciation issues if available
+            issues = result_dict['pronunciation'].get('issues', [])
+            if issues:
+                feedback_lines.append(f"  Issues: {', '.join(issues[:2])}")
         
-        if 'grammar' in scores_dict:
-            grammar_score = scores_dict['grammar']
-            feedback_lines.append(f"• Grammar: {grammar_score}/10 - {'Excellent' if grammar_score >= 8 else 'Good' if grammar_score >= 6 else 'Needs improvement'}")
+        if 'intonation' in result_dict and isinstance(result_dict['intonation'], dict):
+            inton_score = result_dict['intonation'].get('score', 0)
+            feedback_lines.append(f"• Intonation: {inton_score}/10 - {'Excellent' if inton_score >= 8 else 'Good' if inton_score >= 6 else 'Needs improvement'}")
+            
+            # Add intonation issues if available
+            issues = result_dict['intonation'].get('issues', [])
+            if issues:
+                feedback_lines.append(f"  Issues: {', '.join(issues[:2])}")
         
-        if 'vocabulary' in scores_dict:
-            vocab_score = scores_dict['vocabulary']
-            feedback_lines.append(f"• Vocabulary: {vocab_score}/10 - {'Excellent' if vocab_score >= 8 else 'Good' if vocab_score >= 6 else 'Needs improvement'}")
+        if 'pausing' in result_dict and isinstance(result_dict['pausing'], dict):
+            pausing_score = result_dict['pausing'].get('score', 0)
+            feedback_lines.append(f"• Pausing/Phrasing: {pausing_score}/10 - {'Excellent' if pausing_score >= 8 else 'Good' if pausing_score >= 6 else 'Needs improvement'}")
+            
+            # Add pausing issues if available
+            issues = result_dict['pausing'].get('issues', [])
+            if issues:
+                feedback_lines.append(f"  Issues: {', '.join(issues[:2])}")
         
-        if 'coherence' in scores_dict:
-            coherence_score = scores_dict['coherence']
-            feedback_lines.append(f"• Coherence: {coherence_score}/10 - {'Excellent' if coherence_score >= 8 else 'Good' if coherence_score >= 6 else 'Needs improvement'}")
+        # Add general feedback if available
+        if 'feedback' in result_dict:
+            feedback_lines.append(f"\nOverall Feedback:\n{result_dict['feedback']}")
         
         return "\n".join(feedback_lines) if feedback_lines else "No detailed feedback available."
     

@@ -534,7 +534,7 @@ class TOEICGUIApp:
         except Exception as e:
             self.root.after(
                 0,
-                lambda: self.update_status(f"❌ {e}", "red")
+                lambda err=e: self.update_status(f"❌ {err}", "red")
             )
 
     def _update_question_display(self):

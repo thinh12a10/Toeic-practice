@@ -101,7 +101,7 @@ class MainMenuApp:
             {
                 "number": 2,
                 "title": "Part 2: Repeat",
-                "description": "Lặp lại câu nói\n(Repeat spoken text)",
+                "description": "Mô tả hình ảnh\n(Describe a picture)",
                 "color": "#8b5cf6"
             },
             {

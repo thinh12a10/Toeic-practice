@@ -23,6 +23,14 @@ class ResponseEvaluator:
             api_key=gemini_api_key
         )
 
+        self.available_models = [
+            "models/gemini-2.5-flash",
+            "models/gemini-2.5-flash-lite",
+            "models/gemini-3.1-flash-lite-preview"
+        ]
+        self.preferred_model = "models/gemini-3.1-flash-lite-preview"
+        self.models_tried = set()
+
         self.last_evaluation = None
 
     def evaluate(
@@ -219,22 +227,49 @@ IMPORTANT:
 
         try:
 
-            response = self.client.models.generate_content(
-                model="models/gemini-3.1-flash-lite-preview",
-                contents=[
-                    types.Part.from_bytes(
-                        data=audio_bytes,
-                        mime_type="audio/wav"
-                    ),
-                    prompt
-                ],
-                config=types.GenerateContentConfig(
-                    temperature=0.2,
-                    max_output_tokens=700,
-                    response_mime_type="application/json",
-                    response_schema=response_schema
-                )
-            )
+            # Create list of models to try: preferred first, then others
+            models_to_try = [self.preferred_model]
+            models_to_try.extend([m for m in self.available_models if m != self.preferred_model])
+
+            response = None
+
+            # Try each model until one succeeds
+            for model in models_to_try:
+                if model in self.models_tried:
+                    continue
+
+                try:
+                    self.models_tried.add(model)
+                    print(f"⏳ Trying model: {model}")
+
+                    response = self.client.models.generate_content(
+                        model=model,
+                        contents=[
+                            types.Part.from_bytes(
+                                data=audio_bytes,
+                                mime_type="audio/wav"
+                            ),
+                            prompt
+                        ],
+                        config=types.GenerateContentConfig(
+                            temperature=0.2,
+                            max_output_tokens=2000,
+                            response_mime_type="application/json",
+                            response_schema=response_schema
+                        )
+                    )
+
+                    print(f"✓ Successfully generated with model: {model}")
+                    break
+
+                except Exception as model_error:
+                    print(f"⚠ Model {model} failed: {model_error}")
+                    response = None
+                    continue
+
+            if response is None:
+                print("⚠ All available models failed for evaluation")
+                return None
 
             if not response.text:
                 print("⚠ Empty model response")
@@ -287,3 +322,7 @@ IMPORTANT:
                 pass
 
             return None
+
+    def reset_session(self) -> None:
+        """Reset model attempts for new session"""
+        self.models_tried.clear()
