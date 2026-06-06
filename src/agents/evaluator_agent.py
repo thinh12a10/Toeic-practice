@@ -56,7 +56,7 @@ class ResponseEvaluator:
 
         if not result:
             return {
-                "total_score": 5.0,
+                "total_score": 0.0,
                 "feedback": "Evaluation failed."
             }
 

@@ -5,11 +5,14 @@
 SpeechRecognition>=3.10.0      # For audio transcription and voice input
 pyaudio>=0.2.13                # For microphone audio input (may require system packages)
 
+# LLM and AI services
+google-genai>=0.3.0             # For Google Gemini API
+anthropic>=0.3.0               # For using Anthropic Claude API
+openai>=0.27.0                 # For using OpenAI API
+
 # Optional dependencies for enhancements:
 python-dotenv>=0.19.0          # For environment variable management
 requests>=2.28.0               # For API calls if integrating with LLM services
-anthropic>=0.3.0               # For using Anthropic Claude API
-openai>=0.27.0                 # For using OpenAI API
 pyttsx3>=2.90                  # For text-to-speech in dictionary feature
 pytest>=7.0                    # For unit testing
 pytest-cov>=4.0                # For test coverage reporting
