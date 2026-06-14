@@ -26,6 +26,7 @@ try:
     from src.ui.gui_app import TOEICGUIApp
     from src.ui.part2_gui import Part2GUIApp
     from src.ui.part3_gui import Part3GUIApp
+    from src.ui.part4_gui import Part4GUIApp
 except ImportError as e:
     error_msg = f"""
     Missing dependencies: {str(e)}
@@ -94,12 +95,25 @@ def main():
         
         menu_app.register_part_callback(3, open_part3)
         
+        # Register callback for Part 4
+        def open_part4():
+            """Open Part 4 interface"""
+            # Close menu
+            root.destroy()
+            
+            # Create new window for Part 4
+            part4_root = tk.Tk()
+            part4_app = Part4GUIApp(part4_root)
+            part4_root.mainloop()
+        
+        menu_app.register_part_callback(4, open_part4)
+        
         print("✓ Menu Application loaded successfully!")
         print("\n💡 Hướng dẫn:")
         print("  1. Chọn một phần (Part) để bắt đầu")
         print("  2. Hoặc chọn 'Thực hành toàn bộ' để luyện tập tất cả")
-        print("  3. Part 1, Part 2 & Part 3 sẵn sàng để sử dụng ✓")
-        print("  4. Các Part khác sắp ra mắt!\n")
+        print("  3. Part 1, Part 2, Part 3 & Part 4 sẵn sàng để sử dụng ✓")
+        print("  4. Part 5 sắp ra mắt!\n")
         
         # Start the GUI event loop
         root.mainloop()
